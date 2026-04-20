@@ -1,0 +1,19 @@
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Go binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+sales_analyzer_api
+
+# Go test cache
+*.test
+*.out
+
+# Go module cache
+vendor/
