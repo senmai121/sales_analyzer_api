@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -11,9 +12,10 @@ import (
 	"github.com/go-chi/cors"
 	"github.com/joho/godotenv"
 
-	"sales_analyzer_api/internal/llm"
 	"sales_analyzer_api/internal/db"
 	"sales_analyzer_api/internal/handlers"
+	"sales_analyzer_api/internal/llm"
+	authmw "sales_analyzer_api/internal/middleware"
 )
 
 func main() {
@@ -21,6 +23,12 @@ func main() {
 	if err := godotenv.Load(); err != nil {
 		log.Println("No .env file found, using environment variables")
 	}
+
+	jwtSecret := os.Getenv("JWT_SECRET")
+	if jwtSecret == "" {
+		log.Fatal("JWT_SECRET environment variable is required")
+	}
+	fmt.Println(jwtSecret)
 
 	ctx := context.Background()
 
@@ -46,11 +54,12 @@ func main() {
 	insightsHandler := handlers.NewInsightsHandler(pool, claudeClient)
 	similarHandler := handlers.NewSimilarHandler(pool)
 	categoriesHandler := handlers.NewCategoriesHandler(pool)
+	authHandler := handlers.NewAuthHandler(pool, jwtSecret)
 
 	// Set up router
 	r := chi.NewRouter()
 
-	// Middleware
+	// Global middleware
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.RequestID)
@@ -72,16 +81,30 @@ func main() {
 
 	// API routes
 	r.Route("/api", func(r chi.Router) {
-		r.Get("/insights", insightsHandler.ServeHTTP)
-		r.Get("/categories", categoriesHandler.ServeHTTP)
+		// Public auth routes — no JWT required
+		r.Post("/auth/register", authHandler.Register)
+		r.Post("/auth/login", authHandler.Login)
 
-		r.Route("/products", func(r chi.Router) {
-			r.Get("/search", searchHandler.ServeHTTP)
-			r.Get("/ranking", rankingHandler.ServeHTTP)
+		// Protected routes — JWT required
+		r.Group(func(r chi.Router) {
+			r.Use(authmw.JWTAuth(jwtSecret))
 
-			r.Route("/{id}", func(r chi.Router) {
-				r.Get("/summary", summaryHandler.ServeHTTP)
-				r.Get("/similar", similarHandler.ServeHTTP)
+			r.Get("/insights", insightsHandler.ServeHTTP)
+			r.Get("/insights/stream", insightsHandler.ServeSSE)
+			r.Get("/categories", categoriesHandler.ServeHTTP)
+
+			r.Route("/products", func(r chi.Router) {
+				r.Get("/search", searchHandler.ServeHTTP)
+				r.Get("/search/stream", searchHandler.ServeSSE)
+				r.Get("/ranking", rankingHandler.ServeHTTP)
+				r.Get("/ranking/stream", rankingHandler.ServeSSE)
+
+				r.Route("/{id}", func(r chi.Router) {
+					r.Get("/summary", summaryHandler.ServeHTTP)
+					r.Get("/summary/stream", summaryHandler.ServeSSE)
+					r.Get("/similar", similarHandler.ServeHTTP)
+					r.Get("/similar/stream", similarHandler.ServeSSE)
+				})
 			})
 		})
 	})

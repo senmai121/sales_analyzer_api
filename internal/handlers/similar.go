@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"sales_analyzer_api/internal/models"
+	"sales_analyzer_api/internal/sse"
 )
 
 // SimilarHandler handles GET /api/products/:id/similar
@@ -48,6 +49,50 @@ func (h *SimilarHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, similar)
+}
+
+func (h *SimilarHandler) ServeSSE(w http.ResponseWriter, r *http.Request) {
+	idStr := chi.URLParam(r, "id")
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid product id")
+		return
+	}
+
+	writer, ok := sse.New(w)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "streaming not supported")
+		return
+	}
+
+	ctx := r.Context()
+	ch := make(chan sse.Event, 5)
+
+	go func() {
+		defer close(ch)
+
+		ch <- sse.Event{Type: sse.EventProgress, Message: "กำลังค้นหาสินค้าที่คล้ายกัน..."}
+
+		product, err := fetchProduct(ctx, h.db, id)
+		if err != nil {
+			ch <- sse.Event{Type: sse.EventError, Message: err.Error()}
+			return
+		}
+		if product == nil {
+			ch <- sse.Event{Type: sse.EventError, Message: "product not found"}
+			return
+		}
+
+		similar, err := h.findSimilarProducts(ctx, product)
+		if err != nil {
+			ch <- sse.Event{Type: sse.EventError, Message: err.Error()}
+			return
+		}
+
+		ch <- sse.Event{Type: sse.EventResult, Data: similar}
+	}()
+
+	sse.Stream(ctx, writer, ch)
 }
 
 func (h *SimilarHandler) findSimilarProducts(ctx context.Context, product *models.Product) ([]models.Product, error) {

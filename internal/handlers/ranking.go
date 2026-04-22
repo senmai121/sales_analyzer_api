@@ -12,6 +12,7 @@ import (
 
 	"sales_analyzer_api/internal/llm"
 	"sales_analyzer_api/internal/models"
+	"sales_analyzer_api/internal/sse"
 )
 
 // RankingHandler handles GET /api/products/ranking?category=<>
@@ -81,6 +82,82 @@ Products: %s`, string(productsJSON))
 	}
 
 	writeJSON(w, http.StatusOK, rankingResp)
+}
+
+func (h *RankingHandler) ServeSSE(w http.ResponseWriter, r *http.Request) {
+	var categoryID *int
+	if raw := r.URL.Query().Get("category_id"); raw != "" {
+		id, err := strconv.Atoi(raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "category_id must be an integer")
+			return
+		}
+		categoryID = &id
+	}
+
+	writer, ok := sse.New(w)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "streaming not supported")
+		return
+	}
+
+	ctx := r.Context()
+	ch := make(chan sse.Event, 5)
+
+	go func() {
+		defer close(ch)
+
+		ch <- sse.Event{Type: sse.EventProgress, Message: "กำลังดึงรายการสินค้า..."}
+
+		products, err := h.fetchFilteredProducts(ctx, categoryID)
+		if err != nil {
+			ch <- sse.Event{Type: sse.EventError, Message: err.Error()}
+			return
+		}
+
+		if len(products) == 0 {
+			ch <- sse.Event{Type: sse.EventResult, Data: models.RankingResponse{RankedProducts: []models.RankedProduct{}}}
+			return
+		}
+
+		productsJSON, err := json.Marshal(products)
+		if err != nil {
+			ch <- sse.Event{Type: sse.EventError, Message: "failed to marshal products: " + err.Error()}
+			return
+		}
+
+		ch <- sse.Event{Type: sse.EventProgress, Message: "กำลังจัดอันดับด้วย AI..."}
+
+		prompt := fmt.Sprintf(`Rank the following products by their overall quality based on ratings, number of reviews, and sentiment.
+Return a JSON object with key "ranked_products" containing an array of objects, each with:
+- rank (integer, starting from 1)
+- product_id (integer)
+- product_name (string)
+- score (float, 0-10)
+- reason (string, brief explanation)
+
+Products: %s`, string(productsJSON))
+
+		responseText, err := h.claude.Complete(ctx, llm.JSONSystemPrompt, prompt)
+		if err != nil {
+			ch <- sse.Event{Type: sse.EventError, Message: "failed to get AI ranking: " + err.Error()}
+			return
+		}
+
+		var rankingResp models.RankingResponse
+		if err := json.Unmarshal([]byte(responseText), &rankingResp); err != nil {
+			ch <- sse.Event{Type: sse.EventError, Message: "failed to parse AI ranking response: " + err.Error()}
+			return
+		}
+
+		if rankingResp.RankedProducts == nil {
+			rankingResp.RankedProducts = []models.RankedProduct{}
+		}
+
+		ch <- sse.Event{Type: sse.EventResult, Data: rankingResp}
+	}()
+
+	sse.Stream(ctx, writer, ch)
 }
 
 func (h *RankingHandler) fetchFilteredProducts(ctx context.Context, categoryID *int) ([]models.Product, error) {

@@ -13,6 +13,7 @@ import (
 
 	"sales_analyzer_api/internal/llm"
 	"sales_analyzer_api/internal/models"
+	"sales_analyzer_api/internal/sse"
 )
 
 // SummaryHandler handles GET /api/products/:id/summary
@@ -107,6 +108,105 @@ func (h *SummaryHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func (h *SummaryHandler) ServeSSE(w http.ResponseWriter, r *http.Request) {
+	idStr := chi.URLParam(r, "id")
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid product id")
+		return
+	}
+
+	writer, ok := sse.New(w)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "streaming not supported")
+		return
+	}
+
+	ctx := r.Context()
+	ch := make(chan sse.Event, 5)
+
+	go func() {
+		defer close(ch)
+
+		ch <- sse.Event{Type: sse.EventProgress, Message: "กำลังดึงข้อมูลสินค้า..."}
+
+		product, err := fetchProduct(ctx, h.db, id)
+		if err != nil {
+			ch <- sse.Event{Type: sse.EventError, Message: err.Error()}
+			return
+		}
+		if product == nil {
+			ch <- sse.Event{Type: sse.EventError, Message: "product not found"}
+			return
+		}
+
+		reviews := product.ProductDetails.Reviews
+		totalReviews := len(reviews)
+
+		var avgRating float64
+		if totalReviews > 0 {
+			var sum float64
+			for _, rv := range reviews {
+				sum += rv.Rating
+			}
+			avgRating = math.Round((sum/float64(totalReviews))*10) / 10
+		}
+
+		reviewsJSON, _ := json.Marshal(reviews)
+
+		prompt := fmt.Sprintf(
+			"วิเคราะห์ reviews ต่อไปนี้สำหรับสินค้า %s\nสรุปเป็น JSON ที่มี: summary (2-3 ประโยค), pros (array), cons (array), sentiment (positive/neutral/negative)\nReviews: %s",
+			product.ProductName,
+			string(reviewsJSON),
+		)
+
+		var claudeSummary models.ClaudeSummary
+		if totalReviews == 0 {
+			claudeSummary = models.ClaudeSummary{
+				Summary:   "ไม่มีรีวิวสำหรับสินค้านี้",
+				Pros:      []string{},
+				Cons:      []string{},
+				Sentiment: "neutral",
+			}
+		} else {
+			ch <- sse.Event{Type: sse.EventProgress, Message: "กำลังวิเคราะห์รีวิวด้วย AI..."}
+
+			responseText, err := h.claude.Complete(ctx, llm.JSONSystemPrompt, prompt)
+			if err != nil {
+				ch <- sse.Event{Type: sse.EventError, Message: "failed to get AI summary: " + err.Error()}
+				return
+			}
+
+			if err := json.Unmarshal([]byte(responseText), &claudeSummary); err != nil {
+				ch <- sse.Event{Type: sse.EventError, Message: "failed to parse AI response: " + err.Error()}
+				return
+			}
+		}
+
+		resp := models.SummaryResponse{
+			ProductID:    product.ProductID,
+			ProductName:  product.ProductName,
+			AvgRating:    avgRating,
+			TotalReviews: totalReviews,
+			Summary:      claudeSummary.Summary,
+			Pros:         claudeSummary.Pros,
+			Cons:         claudeSummary.Cons,
+			Sentiment:    claudeSummary.Sentiment,
+		}
+
+		if resp.Pros == nil {
+			resp.Pros = []string{}
+		}
+		if resp.Cons == nil {
+			resp.Cons = []string{}
+		}
+
+		ch <- sse.Event{Type: sse.EventResult, Data: resp}
+	}()
+
+	sse.Stream(ctx, writer, ch)
 }
 
 // fetchProduct retrieves a single product by ID. Returns nil, nil when not found.

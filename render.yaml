@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: sales-analyzer-api
+    runtime: docker
+    region: singapore
+    plan: free
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: OPENROUTER_MODEL
+        value: anthropic/claude-sonnet-4-5
+      - key: JWT_SECRET
+        sync: false
+      - key: PORT
+        value: "8080"

@@ -11,6 +11,7 @@ import (
 
 	"sales_analyzer_api/internal/llm"
 	"sales_analyzer_api/internal/models"
+	"sales_analyzer_api/internal/sse"
 )
 
 // SearchHandler handles GET /api/products/search?q=<query>
@@ -33,9 +34,13 @@ func (h *SearchHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Ask Claude to extract filters from the natural language query
 	prompt := fmt.Sprintf(`Extract search filters from this product search query and return a JSON object.
-The JSON must have only these optional fields: colour (string), max_price (number), category (string).
-Only include fields that are clearly mentioned or strongly implied in the query.
-Valid category values: Electronics, Clothing, Accessories, Furniture, Kitchen, Stationery, Footwear, Home.
+The JSON must have only these optional fields: keyword (string), colour (string), max_price (number), category (string), min_rating (number).
+- keyword: the main product type or name being searched (e.g. "keyboard", "scarf", "chair")
+- colour: colour if mentioned
+- max_price: maximum price if mentioned
+- category: one of Electronics, Clothing, Accessories, Furniture, Kitchen, Stationery, Footwear, Home
+- min_rating: minimum star rating 1-5, use when user asks for good/highly-rated/well-reviewed products (e.g. "good reviews" = 3, "great reviews" = 4)
+Only include fields that are clearly mentioned or strongly implied.
 Query: "%s"`, query)
 
 	responseText, err := h.claude.Complete(r.Context(), llm.JSONSystemPrompt, prompt)
@@ -59,10 +64,73 @@ Query: "%s"`, query)
 	writeJSON(w, http.StatusOK, products)
 }
 
+func (h *SearchHandler) ServeSSE(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query().Get("q")
+	if query == "" {
+		writeError(w, http.StatusBadRequest, "query parameter 'q' is required")
+		return
+	}
+
+	writer, ok := sse.New(w)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "streaming not supported")
+		return
+	}
+
+	ctx := r.Context()
+	ch := make(chan sse.Event, 5)
+
+	go func() {
+		defer close(ch)
+
+		ch <- sse.Event{Type: sse.EventProgress, Message: "กำลังแปลงคำค้นหาด้วย AI..."}
+
+		prompt := fmt.Sprintf(`Extract search filters from this product search query and return a JSON object.
+The JSON must have only these optional fields: keyword (string), colour (string), max_price (number), category (string), min_rating (number).
+- keyword: the main product type or name being searched (e.g. "keyboard", "scarf", "chair")
+- colour: colour if mentioned
+- max_price: maximum price if mentioned
+- category: one of Electronics, Clothing, Accessories, Furniture, Kitchen, Stationery, Footwear, Home
+- min_rating: minimum star rating 1-5, use when user asks for good/highly-rated/well-reviewed products (e.g. "good reviews" = 3, "great reviews" = 4)
+Only include fields that are clearly mentioned or strongly implied.
+Query: "%s"`, query)
+
+		responseText, err := h.claude.Complete(ctx, llm.JSONSystemPrompt, prompt)
+		if err != nil {
+			ch <- sse.Event{Type: sse.EventError, Message: "failed to get AI filters: " + err.Error()}
+			return
+		}
+
+		var filters models.SearchFilters
+		if err := json.Unmarshal([]byte(responseText), &filters); err != nil {
+			ch <- sse.Event{Type: sse.EventError, Message: "failed to parse AI filter response: " + err.Error()}
+			return
+		}
+
+		ch <- sse.Event{Type: sse.EventProgress, Message: "กำลังค้นหาสินค้า..."}
+
+		products, err := h.searchProducts(ctx, filters)
+		if err != nil {
+			ch <- sse.Event{Type: sse.EventError, Message: err.Error()}
+			return
+		}
+
+		ch <- sse.Event{Type: sse.EventResult, Data: products}
+	}()
+
+	sse.Stream(ctx, writer, ch)
+}
+
 func (h *SearchHandler) searchProducts(ctx context.Context, filters models.SearchFilters) ([]models.Product, error) {
 	var conditions []string
 	var args []interface{}
 	argIdx := 1
+
+	if filters.Keyword != nil && *filters.Keyword != "" {
+		conditions = append(conditions, fmt.Sprintf("product_name ILIKE $%d", argIdx))
+		args = append(args, "%"+*filters.Keyword+"%")
+		argIdx++
+	}
 
 	if filters.Colour != nil && *filters.Colour != "" {
 		conditions = append(conditions, fmt.Sprintf("LOWER(product_details->>'colour') = LOWER($%d)", argIdx))
@@ -87,6 +155,17 @@ func (h *SearchHandler) searchProducts(ctx context.Context, filters models.Searc
 			args = append(args, categoryID)
 			argIdx++
 		}
+	}
+
+	if filters.MinRating != nil && *filters.MinRating > 0 {
+		// ratings in DB are 0-10; min_rating from Claude is 1-5 stars, so multiply by 2
+		minDB := *filters.MinRating * 2
+		conditions = append(conditions, fmt.Sprintf(`(
+			SELECT AVG((r->>'rating')::numeric)
+			FROM jsonb_array_elements(product_details->'reviews') AS r
+		) >= $%d`, argIdx))
+		args = append(args, minDB)
+		argIdx++
 	}
 
 	baseQuery := "SELECT product_id, product_name, unit_price, product_details, product_category_id FROM products"

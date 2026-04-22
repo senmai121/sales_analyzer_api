@@ -54,9 +54,11 @@ type ClaudeSummary struct {
 
 // SearchFilters is what Claude returns for the search endpoint
 type SearchFilters struct {
+	Keyword   *string  `json:"keyword,omitempty"`   // main product keyword, used for product_name ILIKE
 	Colour    *string  `json:"colour,omitempty"`
 	MaxPrice  *float64 `json:"max_price,omitempty"`
-	Category  *string  `json:"category,omitempty"` // category name, resolved to ID before querying
+	Category  *string  `json:"category,omitempty"`  // category name, resolved to ID before querying
+	MinRating *float64 `json:"min_rating,omitempty"` // minimum star rating 1-5
 }
 
 // RankedProduct is one entry in the ranking response
