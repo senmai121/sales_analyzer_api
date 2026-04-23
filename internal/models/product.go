@@ -54,7 +54,7 @@ type ClaudeSummary struct {
 
 // SearchFilters is what Claude returns for the search endpoint
 type SearchFilters struct {
-	Keyword   *string  `json:"keyword,omitempty"`   // main product keyword, used for product_name ILIKE
+	Keywords  []string `json:"keywords,omitempty"`  // English synonyms for product_name ILIKE
 	Colour    *string  `json:"colour,omitempty"`
 	MaxPrice  *float64 `json:"max_price,omitempty"`
 	Category  *string  `json:"category,omitempty"`  // category name, resolved to ID before querying

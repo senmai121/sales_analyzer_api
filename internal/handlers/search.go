@@ -34,10 +34,10 @@ func (h *SearchHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Ask Claude to extract filters from the natural language query
 	prompt := fmt.Sprintf(`Extract search filters from this product search query and return a JSON object.
-The JSON must have only these optional fields: keyword (string), colour (string), max_price (number), category (string), min_rating (number).
-- keyword: the main product type or name being searched (e.g. "keyboard", "scarf", "chair")
-- colour: colour if mentioned
-- max_price: maximum price if mentioned
+The JSON must have only these optional fields: keywords (array of strings), colour (string), max_price (number), category (string), min_rating (number).
+- keywords: array of English synonyms for the product type (translate + include common e-commerce variants), e.g. "ย้อนยุค"→["vintage","retro","classic","antique"], "เสื้อ"→["shirt","tee","top"], "โบราณ"→["vintage","antique","retro","classic","old"]
+- colour: colour in English if mentioned
+- max_price: maximum price if mentioned as a number
 - category: one of Electronics, Clothing, Accessories, Furniture, Kitchen, Stationery, Footwear, Home
 - min_rating: minimum star rating 1-5, use when user asks for good/highly-rated/well-reviewed products (e.g. "good reviews" = 3, "great reviews" = 4)
 Only include fields that are clearly mentioned or strongly implied.
@@ -86,10 +86,10 @@ func (h *SearchHandler) ServeSSE(w http.ResponseWriter, r *http.Request) {
 		ch <- sse.Event{Type: sse.EventProgress, Message: "กำลังแปลงคำค้นหาด้วย AI..."}
 
 		prompt := fmt.Sprintf(`Extract search filters from this product search query and return a JSON object.
-The JSON must have only these optional fields: keyword (string), colour (string), max_price (number), category (string), min_rating (number).
-- keyword: the main product type or name being searched (e.g. "keyboard", "scarf", "chair")
-- colour: colour if mentioned
-- max_price: maximum price if mentioned
+The JSON must have only these optional fields: keywords (array of strings), colour (string), max_price (number), category (string), min_rating (number).
+- keywords: array of English synonyms for the product type (translate + include common e-commerce variants), e.g. "ย้อนยุค"→["vintage","retro","classic","antique"], "เสื้อ"→["shirt","tee","top"], "โบราณ"→["vintage","antique","retro","classic","old"]
+- colour: colour in English if mentioned
+- max_price: maximum price if mentioned as a number
 - category: one of Electronics, Clothing, Accessories, Furniture, Kitchen, Stationery, Footwear, Home
 - min_rating: minimum star rating 1-5, use when user asks for good/highly-rated/well-reviewed products (e.g. "good reviews" = 3, "great reviews" = 4)
 Only include fields that are clearly mentioned or strongly implied.
@@ -126,10 +126,19 @@ func (h *SearchHandler) searchProducts(ctx context.Context, filters models.Searc
 	var args []interface{}
 	argIdx := 1
 
-	if filters.Keyword != nil && *filters.Keyword != "" {
-		conditions = append(conditions, fmt.Sprintf("product_name ILIKE $%d", argIdx))
-		args = append(args, "%"+*filters.Keyword+"%")
-		argIdx++
+	if len(filters.Keywords) > 0 {
+		var kwClauses []string
+		for _, kw := range filters.Keywords {
+			if kw == "" {
+				continue
+			}
+			kwClauses = append(kwClauses, fmt.Sprintf("product_name ILIKE $%d", argIdx))
+			args = append(args, "%"+kw+"%")
+			argIdx++
+		}
+		if len(kwClauses) > 0 {
+			conditions = append(conditions, "("+strings.Join(kwClauses, " OR ")+")")
+		}
 	}
 
 	if filters.Colour != nil && *filters.Colour != "" {
