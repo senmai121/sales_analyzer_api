@@ -53,6 +53,8 @@ func main() {
 	similarHandler := handlers.NewSimilarHandler(pool)
 	categoriesHandler := handlers.NewCategoriesHandler(pool)
 	authHandler := handlers.NewAuthHandler(pool, jwtSecret)
+	posHandler := handlers.NewPOSHandler(pool)
+	posDashHandler := handlers.NewPOSDashboardHandler(pool)
 
 	// Set up router
 	r := chi.NewRouter()
@@ -90,6 +92,24 @@ func main() {
 			r.Get("/insights", insightsHandler.ServeHTTP)
 			r.Get("/insights/stream", insightsHandler.ServeSSE)
 			r.Get("/categories", categoriesHandler.ServeHTTP)
+
+			r.Route("/pos", func(r chi.Router) {
+				r.Get("/products", posHandler.GetProducts)
+				r.Get("/locations", posDashHandler.GetLocations)
+				r.Get("/customers", posHandler.GetCustomers)
+				r.Post("/customers", posHandler.CreateCustomer)
+				r.Post("/orders", posHandler.CreateOrder)
+				r.Put("/orders/{id}/pay", posHandler.PayOrder)
+				r.Get("/orders", posDashHandler.GetOrders)
+				r.Get("/inventory", posDashHandler.GetInventory)
+
+				r.Route("/dashboard", func(r chi.Router) {
+					r.Get("/stats", posDashHandler.GetStats)
+					r.Get("/revenue", posDashHandler.GetRevenue)
+					r.Get("/top-products", posDashHandler.GetTopProducts)
+					r.Get("/payment-methods", posDashHandler.GetPaymentMethods)
+				})
+			})
 
 			r.Route("/products", func(r chi.Router) {
 				r.Get("/search", searchHandler.ServeHTTP)

@@ -37,6 +37,13 @@ func JWTAuth(secret string) func(http.Handler) http.Handler {
 	}
 }
 
+// GetClaims extracts JWT claims from the request context.
+// Returns nil if no claims are present (e.g. unauthenticated request).
+func GetClaims(r *http.Request) *auth.Claims {
+	claims, _ := r.Context().Value(claimsKey).(*auth.Claims)
+	return claims
+}
+
 func unauthorized(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusUnauthorized)
