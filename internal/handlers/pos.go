@@ -406,36 +406,24 @@ func (h *POSHandler) PayOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Calculate total from order items.
-	itemRows, err := h.db.Query(ctx,
-		"SELECT unit_price, quantity FROM order_items WHERE order_id = $1",
+	// Fetch the stored total_amount (already accounts for discount).
+	var storedTotal float64
+	if err := h.db.QueryRow(ctx,
+		"SELECT total_amount FROM orders WHERE order_id = $1",
 		orderID,
-	)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to fetch items: "+err.Error())
+	).Scan(&storedTotal); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to fetch order total: "+err.Error())
 		return
 	}
-	defer itemRows.Close()
-	for itemRows.Next() {
-		var price float64
-		var qty int
-		if err := itemRows.Scan(&price, &qty); err != nil {
-			writeError(w, http.StatusInternalServerError, "scan error: "+err.Error())
-			return
-		}
-		order.Subtotal += price * float64(qty)
-	}
-	order.VatAmount = math.Round(order.Subtotal*0.07*100) / 100
-	order.TotalAmount = order.Subtotal + order.VatAmount
 
 	// Validate payment sum >= total.
 	var totalPaid float64
 	for _, p := range req.Payments {
 		totalPaid += p.Amount
 	}
-	if totalPaid < order.TotalAmount {
+	if totalPaid < storedTotal {
 		writeError(w, http.StatusBadRequest,
-			fmt.Sprintf("payment total %.2f is less than order total %.2f", totalPaid, order.TotalAmount))
+			fmt.Sprintf("payment total %.2f is less than order total %.2f", totalPaid, storedTotal))
 		return
 	}
 
