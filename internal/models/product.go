@@ -30,6 +30,8 @@ type Product struct {
 	UnitPrice         float64        `json:"unit_price"`
 	ProductDetails    ProductDetails `json:"product_details"`
 	ProductCategoryID *int           `json:"product_category_id,omitempty"`
+	BrandID           *int           `json:"brand_id,omitempty"`
+	BrandName         string         `json:"brand_name,omitempty"`
 }
 
 // SummaryResponse is the response for GET /api/products/:id/summary

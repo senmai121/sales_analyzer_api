@@ -132,7 +132,7 @@ func (h *SearchHandler) searchProducts(ctx context.Context, filters models.Searc
 			if kw == "" {
 				continue
 			}
-			kwClauses = append(kwClauses, fmt.Sprintf("product_name ILIKE $%d", argIdx))
+			kwClauses = append(kwClauses, fmt.Sprintf("p.product_name ILIKE $%d", argIdx))
 			args = append(args, "%"+kw+"%")
 			argIdx++
 		}
@@ -142,13 +142,13 @@ func (h *SearchHandler) searchProducts(ctx context.Context, filters models.Searc
 	}
 
 	if filters.Colour != nil && *filters.Colour != "" {
-		conditions = append(conditions, fmt.Sprintf("LOWER(product_details->>'colour') = LOWER($%d)", argIdx))
+		conditions = append(conditions, fmt.Sprintf("LOWER(p.product_details->>'colour') = LOWER($%d)", argIdx))
 		args = append(args, *filters.Colour)
 		argIdx++
 	}
 
 	if filters.MaxPrice != nil {
-		conditions = append(conditions, fmt.Sprintf("unit_price <= $%d", argIdx))
+		conditions = append(conditions, fmt.Sprintf("p.unit_price <= $%d", argIdx))
 		args = append(args, *filters.MaxPrice)
 		argIdx++
 	}
@@ -160,7 +160,7 @@ func (h *SearchHandler) searchProducts(ctx context.Context, filters models.Searc
 			*filters.Category,
 		).Scan(&categoryID)
 		if err == nil {
-			conditions = append(conditions, fmt.Sprintf("product_category_id = $%d", argIdx))
+			conditions = append(conditions, fmt.Sprintf("p.product_category_id = $%d", argIdx))
 			args = append(args, categoryID)
 			argIdx++
 		}
@@ -171,17 +171,20 @@ func (h *SearchHandler) searchProducts(ctx context.Context, filters models.Searc
 		minDB := *filters.MinRating * 2
 		conditions = append(conditions, fmt.Sprintf(`(
 			SELECT AVG((r->>'rating')::numeric)
-			FROM jsonb_array_elements(product_details->'reviews') AS r
+			FROM jsonb_array_elements(p.product_details->'reviews') AS r
 		) >= $%d`, argIdx))
 		args = append(args, minDB)
 		argIdx++
 	}
 
-	baseQuery := "SELECT product_id, product_name, unit_price, product_details, product_category_id FROM products"
+	baseQuery := `SELECT p.product_id, p.product_name, p.unit_price, p.product_details, p.product_category_id,
+	              p.brand_id, COALESCE(b.name, '') AS brand_name
+	              FROM products p
+	              LEFT JOIN brands b ON b.id = p.brand_id`
 	if len(conditions) > 0 {
 		baseQuery += " WHERE " + strings.Join(conditions, " AND ")
 	}
-	baseQuery += " ORDER BY product_id LIMIT 50"
+	baseQuery += " ORDER BY p.product_id LIMIT 50"
 
 	rows, err := h.db.Query(ctx, baseQuery, args...)
 	if err != nil {
@@ -193,7 +196,7 @@ func (h *SearchHandler) searchProducts(ctx context.Context, filters models.Searc
 	for rows.Next() {
 		var p models.Product
 		var detailsRaw []byte
-		if err := rows.Scan(&p.ProductID, &p.ProductName, &p.UnitPrice, &detailsRaw, &p.ProductCategoryID); err != nil {
+		if err := rows.Scan(&p.ProductID, &p.ProductName, &p.UnitPrice, &detailsRaw, &p.ProductCategoryID, &p.BrandID, &p.BrandName); err != nil {
 			return nil, fmt.Errorf("row scan error: %w", err)
 		}
 		if err := json.Unmarshal(detailsRaw, &p.ProductDetails); err != nil {

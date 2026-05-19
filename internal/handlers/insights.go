@@ -150,7 +150,11 @@ func (h *InsightsHandler) ServeSSE(w http.ResponseWriter, r *http.Request) {
 
 func (h *InsightsHandler) fetchAllProducts(ctx context.Context) ([]models.Product, error) {
 	rows, err := h.db.Query(ctx,
-		"SELECT product_id, product_name, unit_price, product_details FROM products ORDER BY product_id")
+		`SELECT p.product_id, p.product_name, p.unit_price, p.product_details,
+		        p.brand_id, COALESCE(b.name, '') AS brand_name
+		 FROM products p
+		 LEFT JOIN brands b ON b.id = p.brand_id
+		 ORDER BY p.product_id`)
 	if err != nil {
 		return nil, fmt.Errorf("insights query error: %w", err)
 	}
@@ -160,7 +164,7 @@ func (h *InsightsHandler) fetchAllProducts(ctx context.Context) ([]models.Produc
 	for rows.Next() {
 		var p models.Product
 		var detailsRaw []byte
-		if err := rows.Scan(&p.ProductID, &p.ProductName, &p.UnitPrice, &detailsRaw); err != nil {
+		if err := rows.Scan(&p.ProductID, &p.ProductName, &p.UnitPrice, &detailsRaw, &p.BrandID, &p.BrandName); err != nil {
 			return nil, fmt.Errorf("row scan error: %w", err)
 		}
 		if err := json.Unmarshal(detailsRaw, &p.ProductDetails); err != nil {

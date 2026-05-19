@@ -102,18 +102,20 @@ func (h *SimilarHandler) findSimilarProducts(ctx context.Context, product *model
 
 	// Find products with same colour or within price range, excluding the product itself
 	query := `
-		SELECT product_id, product_name, unit_price, product_details,
+		SELECT p.product_id, p.product_name, p.unit_price, p.product_details,
 		(
-			CASE WHEN LOWER(product_details->>'colour') = LOWER($1) THEN 2 ELSE 0 END +
-			CASE WHEN unit_price BETWEEN $2 AND $3 THEN 1 ELSE 0 END
-		) AS similarity_score
-		FROM products
-		WHERE product_id != $4
+			CASE WHEN LOWER(p.product_details->>'colour') = LOWER($1) THEN 2 ELSE 0 END +
+			CASE WHEN p.unit_price BETWEEN $2 AND $3 THEN 1 ELSE 0 END
+		) AS similarity_score,
+		p.brand_id, COALESCE(b.name, '') AS brand_name
+		FROM products p
+		LEFT JOIN brands b ON b.id = p.brand_id
+		WHERE p.product_id != $4
 		AND (
-			LOWER(product_details->>'colour') = LOWER($1)
-			OR unit_price BETWEEN $2 AND $3
+			LOWER(p.product_details->>'colour') = LOWER($1)
+			OR p.unit_price BETWEEN $2 AND $3
 		)
-		ORDER BY similarity_score DESC, product_id
+		ORDER BY similarity_score DESC, p.product_id
 		LIMIT 10
 	`
 
@@ -133,7 +135,7 @@ func (h *SimilarHandler) findSimilarProducts(ctx context.Context, product *model
 		var p models.Product
 		var detailsRaw []byte
 		var score int
-		if err := rows.Scan(&p.ProductID, &p.ProductName, &p.UnitPrice, &detailsRaw, &score); err != nil {
+		if err := rows.Scan(&p.ProductID, &p.ProductName, &p.UnitPrice, &detailsRaw, &score, &p.BrandID, &p.BrandName); err != nil {
 			return nil, fmt.Errorf("row scan error: %w", err)
 		}
 		if err := json.Unmarshal(detailsRaw, &p.ProductDetails); err != nil {

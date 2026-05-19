@@ -166,16 +166,19 @@ func (h *RankingHandler) fetchFilteredProducts(ctx context.Context, categoryID *
 	argIdx := 1
 
 	if categoryID != nil {
-		conditions = append(conditions, fmt.Sprintf("product_category_id = $%d", argIdx))
+		conditions = append(conditions, fmt.Sprintf("p.product_category_id = $%d", argIdx))
 		args = append(args, *categoryID)
 		argIdx++
 	}
 
-	query := "SELECT product_id, product_name, unit_price, product_details, product_category_id FROM products"
+	query := `SELECT p.product_id, p.product_name, p.unit_price, p.product_details, p.product_category_id,
+	          p.brand_id, COALESCE(b.name, '') AS brand_name
+	          FROM products p
+	          LEFT JOIN brands b ON b.id = p.brand_id`
 	if len(conditions) > 0 {
 		query += " WHERE " + strings.Join(conditions, " AND ")
 	}
-	query += " ORDER BY product_id LIMIT 100"
+	query += " ORDER BY p.product_id LIMIT 100"
 
 	rows, err := h.db.Query(ctx, query, args...)
 	if err != nil {
@@ -187,7 +190,7 @@ func (h *RankingHandler) fetchFilteredProducts(ctx context.Context, categoryID *
 	for rows.Next() {
 		var p models.Product
 		var detailsRaw []byte
-		if err := rows.Scan(&p.ProductID, &p.ProductName, &p.UnitPrice, &detailsRaw, &p.ProductCategoryID); err != nil {
+		if err := rows.Scan(&p.ProductID, &p.ProductName, &p.UnitPrice, &detailsRaw, &p.ProductCategoryID, &p.BrandID, &p.BrandName); err != nil {
 			return nil, fmt.Errorf("row scan error: %w", err)
 		}
 		if err := json.Unmarshal(detailsRaw, &p.ProductDetails); err != nil {

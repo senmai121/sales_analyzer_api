@@ -212,12 +212,15 @@ func (h *SummaryHandler) ServeSSE(w http.ResponseWriter, r *http.Request) {
 // fetchProduct retrieves a single product by ID. Returns nil, nil when not found.
 func fetchProduct(ctx context.Context, db *pgxpool.Pool, id int) (*models.Product, error) {
 	row := db.QueryRow(ctx,
-		`SELECT product_id, product_name, unit_price, product_details
-		 FROM products WHERE product_id = $1`, id)
+		`SELECT p.product_id, p.product_name, p.unit_price, p.product_details,
+		        p.brand_id, COALESCE(b.name, '') AS brand_name
+		 FROM products p
+		 LEFT JOIN brands b ON b.id = p.brand_id
+		 WHERE p.product_id = $1`, id)
 
 	var p models.Product
 	var detailsRaw []byte
-	if err := row.Scan(&p.ProductID, &p.ProductName, &p.UnitPrice, &detailsRaw); err != nil {
+	if err := row.Scan(&p.ProductID, &p.ProductName, &p.UnitPrice, &detailsRaw, &p.BrandID, &p.BrandName); err != nil {
 		if err.Error() == "no rows in result set" {
 			return nil, nil
 		}
