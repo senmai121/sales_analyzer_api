@@ -62,6 +62,7 @@ Return a JSON object with key "ranked_products" containing an array of objects, 
 - product_name (string)
 - score (float, 0-10)
 - reason (string, brief explanation)
+- Each product must appear exactly once. Do not repeat any product_id.
 
 Products: %s`, string(productsJSON))
 
@@ -79,6 +80,26 @@ Products: %s`, string(productsJSON))
 
 	if rankingResp.RankedProducts == nil {
 		rankingResp.RankedProducts = []models.RankedProduct{}
+	}
+
+	// Deduplicate: keep only the first occurrence of each product_id
+	seen := make(map[int]struct{}, len(rankingResp.RankedProducts))
+	unique := rankingResp.RankedProducts[:0]
+	for _, rp := range rankingResp.RankedProducts {
+		if _, exists := seen[rp.ProductID]; !exists {
+			seen[rp.ProductID] = struct{}{}
+			unique = append(unique, rp)
+		}
+	}
+	rankingResp.RankedProducts = unique
+
+	// Enrich ranked products with brand_name from the original products list
+	productMap := make(map[int]string, len(products))
+	for _, p := range products {
+		productMap[p.ProductID] = p.BrandName
+	}
+	for i := range rankingResp.RankedProducts {
+		rankingResp.RankedProducts[i].BrandName = productMap[rankingResp.RankedProducts[i].ProductID]
 	}
 
 	writeJSON(w, http.StatusOK, rankingResp)
@@ -135,6 +156,7 @@ Return a JSON object with key "ranked_products" containing an array of objects, 
 - product_name (string)
 - score (float, 0-10)
 - reason (string, brief explanation)
+- Each product must appear exactly once. Do not repeat any product_id.
 
 Products: %s`, string(productsJSON))
 
@@ -152,6 +174,26 @@ Products: %s`, string(productsJSON))
 
 		if rankingResp.RankedProducts == nil {
 			rankingResp.RankedProducts = []models.RankedProduct{}
+		}
+
+		// Deduplicate: keep only the first occurrence of each product_id
+		seen := make(map[int]struct{}, len(rankingResp.RankedProducts))
+		unique := rankingResp.RankedProducts[:0]
+		for _, rp := range rankingResp.RankedProducts {
+			if _, exists := seen[rp.ProductID]; !exists {
+				seen[rp.ProductID] = struct{}{}
+				unique = append(unique, rp)
+			}
+		}
+		rankingResp.RankedProducts = unique
+
+		// Enrich ranked products with brand_name from the original products list
+		productMap := make(map[int]string, len(products))
+		for _, p := range products {
+			productMap[p.ProductID] = p.BrandName
+		}
+		for i := range rankingResp.RankedProducts {
+			rankingResp.RankedProducts[i].BrandName = productMap[rankingResp.RankedProducts[i].ProductID]
 		}
 
 		ch <- sse.Event{Type: sse.EventResult, Data: rankingResp}

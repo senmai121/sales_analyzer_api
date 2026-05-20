@@ -29,6 +29,7 @@ type POSRevenuePoint struct {
 type POSTopProduct struct {
 	ProductID    int     `json:"product_id"`
 	ProductName  string  `json:"product_name"`
+	BrandName    string  `json:"brand_name,omitempty"`
 	TotalQty     int     `json:"total_qty"`
 	TotalRevenue float64 `json:"total_revenue"`
 }
@@ -44,6 +45,7 @@ type POSPaymentMethod struct {
 type POSInventoryItem struct {
 	ProductID   int    `json:"product_id"`
 	ProductName string `json:"product_name"`
+	BrandName   string `json:"brand_name,omitempty"`
 	Size        string `json:"size"`
 	Quantity    int    `json:"quantity"`
 	StoreName   string `json:"store_name"`
@@ -51,10 +53,44 @@ type POSInventoryItem struct {
 
 // POSOrder is one row in the orders list response.
 type POSOrder struct {
-	ID          int       `json:"id"`
-	Status      string    `json:"status"`
-	TotalAmount float64   `json:"total_amount"`
-	StoreID     int       `json:"store_id"`
-	CreatedAt   time.Time `json:"created_at"`
-	ItemsCount  int       `json:"items_count"`
+	ID           int       `json:"id"`
+	Status       string    `json:"status"`
+	TotalAmount  float64   `json:"total_amount"`
+	StoreID      int       `json:"store_id"`
+	StoreName    string    `json:"store_name"`
+	CustomerName string    `json:"customer_name"`
+	CreatedAt    time.Time `json:"created_at"`
+	ItemsCount   int       `json:"items_count"`
+}
+
+// POSOrderDetailItem is one line item in an order detail response.
+type POSOrderDetailItem struct {
+	ProductID   int     `json:"product_id"`
+	ProductName string  `json:"product_name"`
+	BrandName   string  `json:"brand_name,omitempty"`
+	Size        string  `json:"size,omitempty"`
+	Quantity    int     `json:"quantity"`
+	UnitPrice   float64 `json:"unit_price"`
+	TotalAmount float64 `json:"total_amount"`
+}
+
+// POSPaymentRecord is one payment entry in an order detail response.
+type POSPaymentRecord struct {
+	Method    string  `json:"method"`
+	Amount    float64 `json:"amount"`
+	Reference string  `json:"reference,omitempty"`
+}
+
+// POSOrderDetail is the full detail response for GET /api/pos/orders/:id.
+type POSOrderDetail struct {
+	OrderID      int                  `json:"order_id"`
+	Status       string               `json:"status"`
+	StoreName    string               `json:"store_name"`
+	CustomerName string               `json:"customer_name"`
+	Subtotal     float64              `json:"subtotal"`
+	VatAmount    float64              `json:"vat_amount"`
+	TotalAmount  float64              `json:"total_amount"`
+	CreatedAt    time.Time            `json:"created_at"`
+	Items        []POSOrderDetailItem `json:"items"`
+	Payments     []POSPaymentRecord   `json:"payments"`
 }

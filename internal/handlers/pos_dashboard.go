@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"sales_analyzer_api/internal/models"
@@ -222,14 +223,16 @@ func (h *POSDashboardHandler) GetTopProducts(w http.ResponseWriter, r *http.Requ
 		query = `
 			SELECT oi.product_id,
 			       p.product_name,
+			       COALESCE(b.name, '')              AS brand_name,
 			       SUM(oi.quantity)::int              AS total_qty,
 			       COALESCE(SUM(oi.total_amount), 0) AS total_revenue
 			FROM order_items oi
 			JOIN orders  o ON o.order_id  = oi.order_id
 			JOIN products p ON p.product_id = oi.product_id
+			LEFT JOIN brands b ON b.id = p.brand_id
 			WHERE UPPER(o.order_status) = 'PAID'
 			  AND o.store_id = $1
-			GROUP BY oi.product_id, p.product_name
+			GROUP BY oi.product_id, p.product_name, b.name
 			ORDER BY total_qty DESC
 			LIMIT $2`
 		args = []interface{}{sid, limit}
@@ -237,13 +240,15 @@ func (h *POSDashboardHandler) GetTopProducts(w http.ResponseWriter, r *http.Requ
 		query = `
 			SELECT oi.product_id,
 			       p.product_name,
+			       COALESCE(b.name, '')              AS brand_name,
 			       SUM(oi.quantity)::int              AS total_qty,
 			       COALESCE(SUM(oi.total_amount), 0) AS total_revenue
 			FROM order_items oi
 			JOIN orders  o ON o.order_id  = oi.order_id
 			JOIN products p ON p.product_id = oi.product_id
+			LEFT JOIN brands b ON b.id = p.brand_id
 			WHERE UPPER(o.order_status) = 'PAID'
-			GROUP BY oi.product_id, p.product_name
+			GROUP BY oi.product_id, p.product_name, b.name
 			ORDER BY total_qty DESC
 			LIMIT $1`
 		args = []interface{}{limit}
@@ -259,7 +264,7 @@ func (h *POSDashboardHandler) GetTopProducts(w http.ResponseWriter, r *http.Requ
 	result := []models.POSTopProduct{}
 	for rows.Next() {
 		var p models.POSTopProduct
-		if err := rows.Scan(&p.ProductID, &p.ProductName, &p.TotalQty, &p.TotalRevenue); err != nil {
+		if err := rows.Scan(&p.ProductID, &p.ProductName, &p.BrandName, &p.TotalQty, &p.TotalRevenue); err != nil {
 			writeError(w, http.StatusInternalServerError, "scan error: "+err.Error())
 			return
 		}
@@ -335,12 +340,14 @@ func (h *POSDashboardHandler) GetInventory(w http.ResponseWriter, r *http.Reques
 		query = `
 			SELECT p.product_id,
 			       p.product_name,
+			       COALESCE(b.name, '') AS brand_name,
 			       i.size,
 			       i.quantity,
 			       s.store_name
 			FROM inventory i
 			JOIN products p ON p.product_id = i.product_id
 			JOIN stores   s ON s.store_id   = i.store_id
+			LEFT JOIN brands b ON b.id = p.brand_id
 			WHERE i.store_id = $1
 			ORDER BY i.quantity ASC, p.product_name`
 		args = []interface{}{sid}
@@ -348,12 +355,14 @@ func (h *POSDashboardHandler) GetInventory(w http.ResponseWriter, r *http.Reques
 		query = `
 			SELECT p.product_id,
 			       p.product_name,
+			       COALESCE(b.name, '') AS brand_name,
 			       i.size,
 			       i.quantity,
 			       s.store_name
 			FROM inventory i
 			JOIN products p ON p.product_id = i.product_id
 			JOIN stores   s ON s.store_id   = i.store_id
+			LEFT JOIN brands b ON b.id = p.brand_id
 			ORDER BY i.quantity ASC, p.product_name`
 	}
 
@@ -367,7 +376,7 @@ func (h *POSDashboardHandler) GetInventory(w http.ResponseWriter, r *http.Reques
 	result := []models.POSInventoryItem{}
 	for rows.Next() {
 		var item models.POSInventoryItem
-		if err := rows.Scan(&item.ProductID, &item.ProductName, &item.Size, &item.Quantity, &item.StoreName); err != nil {
+		if err := rows.Scan(&item.ProductID, &item.ProductName, &item.BrandName, &item.Size, &item.Quantity, &item.StoreName); err != nil {
 			writeError(w, http.StatusInternalServerError, "scan error: "+err.Error())
 			return
 		}
@@ -381,6 +390,8 @@ func (h *POSDashboardHandler) GetInventory(w http.ResponseWriter, r *http.Reques
 func (h *POSDashboardHandler) GetOrders(w http.ResponseWriter, r *http.Request) {
 	storeID := r.URL.Query().Get("store_id")
 	status := r.URL.Query().Get("status")
+	dateFrom := r.URL.Query().Get("date_from")
+	dateTo := r.URL.Query().Get("date_to")
 	limitStr := r.URL.Query().Get("limit")
 	offsetStr := r.URL.Query().Get("offset")
 
@@ -414,6 +425,16 @@ func (h *POSDashboardHandler) GetOrders(w http.ResponseWriter, r *http.Request) 
 		args = append(args, status)
 		idx++
 	}
+	if dateFrom != "" {
+		where += fmt.Sprintf(" AND DATE(o.order_tms) >= $%d", idx)
+		args = append(args, dateFrom)
+		idx++
+	}
+	if dateTo != "" {
+		where += fmt.Sprintf(" AND DATE(o.order_tms) <= $%d", idx)
+		args = append(args, dateTo)
+		idx++
+	}
 
 	args = append(args, limit, offset)
 
@@ -422,12 +443,16 @@ func (h *POSDashboardHandler) GetOrders(w http.ResponseWriter, r *http.Request) 
 		       o.order_status,
 		       COALESCE(o.total_amount, 0),
 		       o.store_id,
+		       COALESCE(s.store_name, '') AS store_name,
+		       COALESCE(c.full_name, 'Walk-in') AS customer_name,
 		       o.order_tms,
 		       COUNT(oi.line_item_id)::int AS items_count
 		FROM orders o
 		LEFT JOIN order_items oi ON oi.order_id = o.order_id
+		LEFT JOIN stores s ON s.store_id = o.store_id
+		LEFT JOIN customers c ON c.customer_id = o.customer_id
 		%s
-		GROUP BY o.order_id, o.order_status, o.total_amount, o.store_id, o.order_tms
+		GROUP BY o.order_id, o.order_status, o.total_amount, o.store_id, s.store_name, c.full_name, o.order_tms
 		ORDER BY o.order_tms DESC
 		LIMIT $%d OFFSET $%d`,
 		where, idx, idx+1,
@@ -444,11 +469,90 @@ func (h *POSDashboardHandler) GetOrders(w http.ResponseWriter, r *http.Request) 
 	for rows.Next() {
 		var o models.POSOrder
 		if err := rows.Scan(&o.ID, &o.Status, &o.TotalAmount, &o.StoreID,
-			&o.CreatedAt, &o.ItemsCount); err != nil {
+			&o.StoreName, &o.CustomerName, &o.CreatedAt, &o.ItemsCount); err != nil {
 			writeError(w, http.StatusInternalServerError, "scan error: "+err.Error())
 			return
 		}
 		result = append(result, o)
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+// ---------- GET /api/pos/orders/{id} ----------
+
+// GetOrderDetail handles GET /api/pos/orders/:id
+func (h *POSDashboardHandler) GetOrderDetail(w http.ResponseWriter, r *http.Request) {
+	idStr := chi.URLParam(r, "id")
+	orderID, err := strconv.Atoi(idStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid order id")
+		return
+	}
+	ctx := r.Context()
+
+	// Fetch order header
+	var detail models.POSOrderDetail
+	err = h.db.QueryRow(ctx, `
+		SELECT o.order_id, o.order_status,
+		       COALESCE(o.subtotal, 0), COALESCE(o.vat_amount, 0), COALESCE(o.total_amount, 0),
+		       o.order_tms,
+		       COALESCE(s.store_name, '') AS store_name,
+		       COALESCE(c.full_name, 'Walk-in') AS customer_name
+		FROM orders o
+		LEFT JOIN stores s ON s.store_id = o.store_id
+		LEFT JOIN customers c ON c.customer_id = o.customer_id
+		WHERE o.order_id = $1`, orderID).
+		Scan(&detail.OrderID, &detail.Status,
+			&detail.Subtotal, &detail.VatAmount, &detail.TotalAmount,
+			&detail.CreatedAt, &detail.StoreName, &detail.CustomerName)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "order not found")
+		return
+	}
+
+	// Fetch order items
+	rows, err := h.db.Query(ctx, `
+		SELECT oi.product_id, p.product_name, COALESCE(b.name, '') AS brand_name,
+		       oi.quantity, oi.unit_price, COALESCE(oi.total_amount, 0)
+		FROM order_items oi
+		JOIN products p ON p.product_id = oi.product_id
+		LEFT JOIN brands b ON b.id = p.brand_id
+		WHERE oi.order_id = $1
+		ORDER BY oi.line_item_id`, orderID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to fetch items: "+err.Error())
+		return
+	}
+	defer rows.Close()
+	detail.Items = []models.POSOrderDetailItem{}
+	for rows.Next() {
+		var item models.POSOrderDetailItem
+		if err := rows.Scan(&item.ProductID, &item.ProductName, &item.BrandName,
+			&item.Quantity, &item.UnitPrice, &item.TotalAmount); err != nil {
+			writeError(w, http.StatusInternalServerError, "scan error: "+err.Error())
+			return
+		}
+		detail.Items = append(detail.Items, item)
+	}
+
+	// Fetch payments
+	pRows, err := h.db.Query(ctx, `
+		SELECT method, amount, COALESCE(reference, '')
+		FROM payments WHERE order_id = $1 ORDER BY created_at`, orderID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to fetch payments: "+err.Error())
+		return
+	}
+	defer pRows.Close()
+	detail.Payments = []models.POSPaymentRecord{}
+	for pRows.Next() {
+		var p models.POSPaymentRecord
+		if err := pRows.Scan(&p.Method, &p.Amount, &p.Reference); err != nil {
+			writeError(w, http.StatusInternalServerError, "scan error: "+err.Error())
+			return
+		}
+		detail.Payments = append(detail.Payments, p)
+	}
+
+	writeJSON(w, http.StatusOK, detail)
 }

@@ -91,6 +91,7 @@ func (h *SummaryHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	resp := models.SummaryResponse{
 		ProductID:    product.ProductID,
 		ProductName:  product.ProductName,
+		BrandName:    product.BrandName,
 		AvgRating:    avgRating,
 		TotalReviews: totalReviews,
 		Summary:      claudeSummary.Summary,
@@ -188,6 +189,7 @@ func (h *SummaryHandler) ServeSSE(w http.ResponseWriter, r *http.Request) {
 		resp := models.SummaryResponse{
 			ProductID:    product.ProductID,
 			ProductName:  product.ProductName,
+			BrandName:    product.BrandName,
 			AvgRating:    avgRating,
 			TotalReviews: totalReviews,
 			Summary:      claudeSummary.Summary,

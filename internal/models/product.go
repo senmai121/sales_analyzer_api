@@ -38,6 +38,7 @@ type Product struct {
 type SummaryResponse struct {
 	ProductID    int      `json:"product_id"`
 	ProductName  string   `json:"product_name"`
+	BrandName    string   `json:"brand_name,omitempty"`
 	AvgRating    float64  `json:"avg_rating"`
 	TotalReviews int      `json:"total_reviews"`
 	Summary      string   `json:"summary"`
@@ -68,6 +69,7 @@ type RankedProduct struct {
 	Rank        int     `json:"rank"`
 	ProductID   int     `json:"product_id"`
 	ProductName string  `json:"product_name"`
+	BrandName   string  `json:"brand_name,omitempty"`
 	Score       float64 `json:"score"`
 	Reason      string  `json:"reason"`
 }

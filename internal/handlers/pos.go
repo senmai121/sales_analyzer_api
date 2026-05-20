@@ -33,6 +33,7 @@ type posProduct struct {
 	ProductID   int              `json:"product_id"`
 	SKU         string           `json:"sku"`
 	ProductName string           `json:"product_name"`
+	BrandName   string           `json:"brand_name,omitempty"`
 	UnitPrice   float64          `json:"unit_price"`
 	Sizes       []posProductSize `json:"sizes"`
 }
@@ -145,9 +146,11 @@ func (h *POSHandler) GetProducts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	query := `
-		SELECT p.product_id, p.sku, p.product_name, p.unit_price, i.size, COALESCE(i.quantity, 0)
+		SELECT p.product_id, p.sku, p.product_name, COALESCE(b.name, '') AS brand_name,
+		       p.unit_price, i.size, COALESCE(i.quantity, 0)
 		FROM products p
 		JOIN inventory i ON i.product_id = p.product_id
+		LEFT JOIN brands b ON b.id = p.brand_id
 		WHERE i.store_id = $1`
 	args := []interface{}{storeID}
 
@@ -169,16 +172,16 @@ func (h *POSHandler) GetProducts(w http.ResponseWriter, r *http.Request) {
 
 	for rows.Next() {
 		var pid int
-		var sku, name, size string
+		var sku, name, brandName, size string
 		var price float64
 		var qty int
-		if err := rows.Scan(&pid, &sku, &name, &price, &size, &qty); err != nil {
+		if err := rows.Scan(&pid, &sku, &name, &brandName, &price, &size, &qty); err != nil {
 			writeError(w, http.StatusInternalServerError, "scan error: "+err.Error())
 			return
 		}
 		if _, ok := productMap[pid]; !ok {
 			productMap[pid] = &posProduct{
-				ProductID: pid, SKU: sku, ProductName: name, UnitPrice: price,
+				ProductID: pid, SKU: sku, ProductName: name, BrandName: brandName, UnitPrice: price,
 				Sizes: []posProductSize{},
 			}
 			order = append(order, pid)

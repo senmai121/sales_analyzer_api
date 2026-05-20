@@ -101,6 +101,7 @@ func main() {
 				r.Post("/orders", posHandler.CreateOrder)
 				r.Put("/orders/{id}/pay", posHandler.PayOrder)
 				r.Get("/orders", posDashHandler.GetOrders)
+				r.Get("/orders/{id}", posDashHandler.GetOrderDetail)
 				r.Get("/inventory", posDashHandler.GetInventory)
 
 				r.Route("/dashboard", func(r chi.Router) {
